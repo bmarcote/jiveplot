@@ -76,6 +76,16 @@ def chunkert(f, l, cs, verbose=True):
         yield (f, n)
         f = f + n
 
+percent = lambda x, y: (float(x)/float(y))*100.0
+
+def cli_progress_bar(current_val, end_val, bar_length=40):
+        percent = current_val/end_val
+        hashes = '#'*int(round(percent*bar_length))
+        spaces = ' '*(bar_length-len(hashes))
+        sys.stdout.write("\rProgress: [{0}] {1}%".format(hashes+spaces, int(round(percent*100))))
+        sys.stdout.flush()
+
+
 def get_observed_subbands(ms):
     """Given a MS file, it checks which subbands each antenna actually observed.
     Meaning for which subbands each antenna has non-zero data.
@@ -97,12 +107,16 @@ def get_observed_subbands(ms):
             spws = mstable.getcol('DATA_DESC_ID', startrow=start, nrow=nrow)
             msdata = mstable.getcol('DATA', startrow=start, nrow=nrow)
 
-            for antenna in antenna_names:
+            for antenna,antenna_name in enumerate(antenna_names):
                 for spw in spw_names:
                     cond = np.where((ants1 == antenna) & (ants2 == antenna) & (spws == spw))
-                    if (msdata[cond] < 1e-7).all():
+                    if not (abs(msdata[cond]) < 1e-6).all():
                         ants_spws[antenna].add(spw)
 
+            # Here as there will be a warning and it messes up the stdout output
+            cli_progress_bar(start, len(mstable), bar_length=40)
+
+    print('\n')
     return ants_spws
 
 def find_best_subband(ants_spws):
@@ -116,7 +130,20 @@ def find_best_subband(ants_spws):
 
     # .most_common() returns a list with the orderered elements,
     # each in a two-elemen tuple: the element and the number of repetitions.
-    return counting.most_common()[0][0]
+    # Gets all SBs with the same repetitions, and take the average one.
+    max_rep = None
+    sbs = []
+    for sb,rep in counting.most_common():
+        if max_rep is None:
+            max_rep = rep
+            sbs.append(sb)
+        else:
+            if max_rep == rep:
+                sbs.append(sb)
+            else:
+                break
+
+    return int(np.mean(sbs))
 
 
 def Usage(prog, full):
@@ -206,11 +233,12 @@ def mk_anp_chan_cross_plot(settings, scansel, num):
     yield "bl {0}* -auto".format( settings.refant )
     yield "fq *;ch none"
     yield "avt vector;avc none"
-    yield "pt anpchan"
+    yield "pt anpfreq"
     yield "y local"
+    yield "x global"
     # select the scan
     yield "scan mid-30s to mid+30s where {0}".format( scansel(settings.calsrc) )
-    yield "new all false bl true sb false"
+    yield "new all false bl true sb false time true"
     yield "multi true"
     yield "sort bl"
     yield PolCMap
@@ -225,8 +253,9 @@ def mk_amp_chan_auto_plot(settings, scansel, num):
     yield "fq */p;ch none"
     yield "avt scalar;avc none"
     yield "time none"
-    yield "pt ampchan"
+    yield "pt ampfreq"
     yield "y 0 2"
+    yield "x global"
     # select the scan
     yield "scan mid-30s to mid+30s where {0}".format( scansel(settings.calsrc) )
     yield "new all false bl true sb false time true"
@@ -247,6 +276,7 @@ def mk_amp_time_auto_plot(settings, scansel, num):
     yield "avt none;avc vector"
     yield "pt amptime"
     yield "y local"
+    yield "x global"
     # select the scan
     yield "scan start-20m to end+100m where {0}".format( scansel(settings.calsrc) )
     yield "time"
@@ -264,6 +294,7 @@ def mk_anp_time_cross_plot(settings, timesel, sbsel, num):
     yield "avt none;avc vector"
     yield "pt anptime"
     yield "y local"
+    yield "x global"
     # select the scan
     # yield "scan start-20m to end+100m where {0}".format( scansel(settings.calsrc) )
     yield "src none"
@@ -288,9 +319,10 @@ def mk_weight_plot(settings):
     yield "pt wt"
     yield "new all f bl t"
     yield "y global"
+    yield "x global"
     yield "sort bl"
     yield "refile {0}-weight.ps/cps".format( settings.myBasename )
-    yield "wt 0.1"
+    # yield "wt 0.1"
     yield "pl"
     print("done weight plot")
 
@@ -315,7 +347,6 @@ scans       = []
 
 subbandNo = find_best_subband(get_observed_subbands(s.measurementset))
 print(f"Subband {subbandNo} selected for amp & phase VS time plot.")
-
 
 if ScanNo:
     scans = ["scan_number={0}".format(ScanNo).format]
